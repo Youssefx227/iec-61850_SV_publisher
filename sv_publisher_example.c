@@ -5,8 +5,6 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
-#define _USE_MATH_DEFINES
-#define GNU_SOURCE
 #include <math.h>
 #include <signal.h>
 #include <time.h>
@@ -16,21 +14,21 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <pthread.h>
-
+#include <sched.h>
+#define _USE_MATH_DEFINES
+#define GNU_SOURCE
 #define gettid() syscall(__NR_gettid)
-
+#define TWO_PI_OVER_THREE  2.0943951
 #define SCHED_DEADLINE	6
 
  /* XXX use the proper syscall numbers */
  #ifdef __x86_64__
  #define __NR_sched_setattr		314
- #define __NR_sched_getattr		315
+ #define __NR_sched_getattr	    315
  #endif
 
-#define TWO_PI_OVER_THREE  2.0943951
 
  static volatile int done;
-
 
 /* Remaining fields are for SCHED_DEADLINE */
  struct sched_attr {
@@ -70,6 +68,7 @@ SCHED_RR) */
 	return syscall(__NR_sched_getattr, pid, attr, size, flags);
  }
 
+
 typedef struct data_{
 
     char* interface;
@@ -81,8 +80,7 @@ typedef struct data_{
 }data_;
 
 
-
-void time_add_ms( struct timespec *t,int ns)
+void time_add_ns( struct timespec *t,int ns)
 {
 
     t->tv_nsec += ns;
@@ -124,6 +122,7 @@ void *publish (void *donnees){
     interface =(*param).interface ;
     Quality q= QUALITY_VALIDITY_GOOD;
 
+
     SVPublisher svPublisher  = SVPublisher_create(NULL,interface); // Crée un nouveau publisher de sampled values selon l'IEC61850-9-2
     SVPublisher_ASDU asdu1 = SVPublisher_addASDU(svPublisher, "svpub1isher", NULL,1); // création d'un bloc de donnée qui sera générer
 
@@ -145,6 +144,10 @@ void *publish (void *donnees){
     int Vmcq = SVPublisher_ASDU_addQuality(asdu1);
     int Vmnq = SVPublisher_ASDU_addQuality(asdu1);
     int ts1 = SVPublisher_ASDU_addTimestamp(asdu1);
+
+    SVPublisher_ASDU_setSmpCntWrap(asdu1, 4000);
+    SVPublisher_ASDU_setRefrTm(asdu1, 0);
+
     SVPublisher_setupComplete(svPublisher);
 
     clock_t tinit,tfinal;
@@ -152,43 +155,40 @@ void *publish (void *donnees){
     double time_used=0.0;
     double time_theoric = 0.999750;
     double marge = 250.0e-6;
-
     /* ====== Deadline scheduler ====== */
-    double runtime = 0.8e9;
-    double deadline = 1.0e9;
+  //  int runtime = 30000000;
+  //  int deadline = 1e9;
     /*---- période de la tâche publication de 1s --- */
-    double period = 1.0e9;
-
+//    int period = 1e9;
+    int ret;
+    unsigned int flags =0;
     struct sched_attr attr;
-	int ret;
-	unsigned int flags = 0;
-	// instanciation des attributs
-    attr.size = sizeof(attr);
+
+//  affectation des attributs
+    printf("deadline thread started [%ld]\n", gettid());
+
+	attr.size = sizeof(struct sched_attr);
+	attr.sched_policy = SCHED_DEADLINE;
 	attr.sched_flags = 0;
 	attr.sched_nice = 0;
 	attr.sched_priority = 0;
-
-	attr.sched_policy = SCHED_DEADLINE;
-	attr.sched_runtime = runtime;
-    attr.sched_deadline = deadline;
-    attr.sched_period = period;
+    attr.sched_policy = SCHED_DEADLINE;
+    attr.sched_runtime = 0.9e9;
+	attr.sched_period = attr.sched_deadline = 1.0e9;
 	ret = sched_setattr(0, &attr, flags);
 
-	if (ret < 0) {
-		done = 0;
-		perror("sched_setattr");
-		exit(-1);
-	}
-
+		if (ret < 0) {
+			done = 0;
+			perror("sched_setattr");
+			exit(-1);
+		}
     /* period in milliseconds */
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    time_add_ms(&t,period);
 
     while (!done) {  /* Boucle infinie */
 
         tinit = clock();
-
         while(*n<4000){
 
         /*verouillage du mutex*/
@@ -214,44 +214,49 @@ void *publish (void *donnees){
         SVPublisher_ASDU_setFLOAT64(asdu1, Vmn,*Vn);
         SVPublisher_ASDU_setQuality(asdu1, Vmnq,q);
         SVPublisher_ASDU_setTimestamp(asdu1,ts1,ts);
+
+        SVPublisher_ASDU_setRefrTm(asdu1, Hal_getTimeInMs());
         SVPublisher_ASDU_increaseSmpCnt(asdu1);
+
         SVPublisher_publish(svPublisher);
-        /*
-        printf("\t sample : %f ", *n);    // vérification sur le terminal des valeurs écrites
-        printf(" Tension Va: %f ", *Va);
-        printf(" Tension Vb: %f ", *Vb);
-        printf(" Tension Vc: %f ", *Vc);
-        printf(" Tension Vn: %f ", *Vn);
-        printf(" courant ia: %f ", *ia);
-        printf(" courant ib: %f ", *ib);
-        printf(" courant ic: %f ", *ic);
-        printf(" courant in: %f\n",*in);
+/*
+        printf("\t sample :  %.2f ", *n );    // vérification sur le terminal des valeurs écrites
+        printf(" Tension Va: %.2f ", *Va);
+        printf(" Tension Vb: %.2f ", *Vb);
+        printf(" Tension Vc: %.2f ", *Vc);
+        printf(" Tension Vn: %.2f ", *Vn);
+        printf(" courant ia: %.2f ", *ia);
+        printf(" courant ib: %.2f ", *ib);
+        printf(" courant ic: %.2f ", *ic);
+        printf(" courant in: %.2f\n",*in);
 */
-          *n+=1; // j'incrémente la valeur de mon échantillon
+        *n+=1; // j'incrémente la valeur de mon échantillon
         /*déverouillage du mutex*/
         pthread_mutex_unlock(&(param->mutex));
-        }
-
         /*reveil de l'horloge */
         clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME, &t, NULL);
-        /* attente le temps d'avoir 1s entre chaque cycle*/
-        time_add_ms(&t,period);
+        /* attente le temps d'avoir 250us entre chaque échantillon*/
+        time_add_ns(&t,250000);
+        }
+
         /*mesure du temps final*/
         tfinal = clock();
+        time_used = (double)(tfinal-tinit)/(double) CLOCKS_PER_SEC ;
         /*calcul du temps de cycle*/
-        time_used = time_used + (double)(tfinal - tinit)/ (double) CLOCKS_PER_SEC;
-        /*affichage*/
-         printf("  temps de cycle pratique : %2.6f s ----------- temps de cycle theorique: %2.6f s\n",time_used,time_theoric+marge);
-        if (time_used < time_theoric - marge || time_used > time_theoric + marge){//-marge// (tfinal-tinit) > 999.750+marge)
-            printf(" erreur : respect de la durée limite \n");
-        }
+        /* Affichage des différents temps et temps consommes */
+        printf("Nb ticks/seconde = %ld,  Nb ticks depart : %ld, " "Nb ticks final : %ld\n",CLOCKS_PER_SEC, (long)tinit, (long)tfinal);
+        printf("Temps consommé (s) : %lf \n",time_used);
+
+       if (time_used < time_theoric - marge || time_used > time_theoric + marge)
+          printf(" erreur : non respect de la durée limite \n");
 
         /* réinitialisation --- nouveau cycle */
         *n=0;
-        time_used=0;
+        SVPublisher_ASDU_setSmpCnt(asdu1,0);
     }
 
     SVPublisher_destroy(svPublisher); //destruction publisher
+
     pthread_exit(NULL);
 }
 
@@ -315,17 +320,17 @@ int
 main(int argc, char** argv)
 {
     char* Interface;
-    float n = 0.f;
-    float fech=4000.f;
+    float n = 0.0;
+    float fech=4000.0;
     double Va,Vb,Vc,Vn,ia,ib,ic,in,theta;
-    float f_nominal =50.0,samplesPerCycle=80.0,f=50.0,w= 2*M_PI*f,Vamp =110000.0,Zmag = 80.0,phase=0.0;
+    float f_nominal =50.0,samplesPerCycle=80.0,f=50.0,w= 2*M_PI*f,Vamp =11000.0,Zmag = 80.0,phase=0.0;
     float Iamp =Vamp/Zmag;
 
     if (argc > 1)
         Interface = argv[1];
     else
         Interface = "eth0";
-
+    printf("Using Interface : %s \n",Interface);
     // création d'un bloc de données de thread de types data_
     data_ thread_data;
 
@@ -361,6 +366,7 @@ main(int argc, char** argv)
     pthread_t thread_create_signal;
 
     // priorité thread
+
     pthread_attr_t attr1,attr2; 		//attributs pour gérer les priorités
 	struct sched_param sched1,sched2;	//gestionnaire de priorité
     sched1.sched_priority = 99;
@@ -369,8 +375,8 @@ main(int argc, char** argv)
 	pthread_attr_init(&attr1); 		//initialise les attributs par défauts
 	pthread_attr_init(&attr2);
 
-	sched_setscheduler(0, SCHED_RR, &sched1); //on instancie les gestionnaires
-	sched_setscheduler(0, SCHED_RR, &sched2);
+	sched_setscheduler(0, SCHED_FIFO, &sched1); //on instancie les gestionnaires
+	sched_setscheduler(0, SCHED_FIFO, &sched2);
 
 	pthread_attr_setschedparam(&attr1,&sched1); //on initialise les attributs en fonction des gestionnaires
 	pthread_attr_setschedparam(&attr2,&sched2);
