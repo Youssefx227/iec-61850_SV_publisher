@@ -1,0 +1,14 @@
+# un commentaire, cette ligne est ignorée
+# pas de fichier .a
+*.a
+# mais suivre lib.a malgré la règle précédente
+!lib.a
+# ignorer uniquement le fichier TODO à la racine du projet
+/TODO
+# ignorer tous les fichiers dans le répertoire build
+build/
+# ignorer doc/notes.txt, mais pas doc/server/arch.txt
+doc/*.txt
+# ignorer tous les fichiers .txt sous le répertoire doc/
+doc/**/*.txt
+ 

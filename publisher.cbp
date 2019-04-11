@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="publisher" />
+		<Option execution_dir="../publisher" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Option extended_obj_names="1" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/publisher" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Debug/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-g" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/config" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/hal/inc" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/src/mms/inc" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/src/sampled_values" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/src/iec61850/inc" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/src/common/inc" />
+					<Add directory="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/src/logging" />
+					<Add directory="/home/nathan/Documents/youssef_C/inc" />
+				</Compiler>
+				<Linker>
+					<Add option="-lpthread" />
+					<Add option="-lm" />
+					<Add library="/home/nathan/Documents/youssef_C/libiec61850-1.3.3/build/libiec61850.a" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-Wall" />
+		</Compiler>
+		<Unit filename="sv_publisher_example.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Extensions>
+			<code_completion />
+			<debugger />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>
