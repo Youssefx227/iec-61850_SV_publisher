@@ -5,8 +5,11 @@
 #include <hal_thread.h>
 #include <static_model.h>
 #include <signal.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <math.h>
 #include <signal.h>
 #include <time.h>
@@ -154,8 +157,8 @@ void *publish (void *donnees){
 
     SVPublisher_setupComplete(svPublisher);
 
-    float time_theoric = 999750.0; //us
-    float marge = 250.0; //us
+ //   float time_theoric = 999750.0; //us
+//    float marge = 250.0; //us
         /* ====== Deadline scheduler ====== */
       /* période de la tâche publication de 1s */
     unsigned int flags =0;
@@ -180,8 +183,9 @@ void *publish (void *donnees){
     struct timeval debut_programme;
     long int duration;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    int i=0,taille=30;
-    long int duree [taille];
+    // stockage dans un tableau des temps de cycles
+    int i=0,taille=60;
+    long int duree[taille];
 
     gettimeofday(&debut_programme,NULL);
     while (!done) {  /* Boucle infinie */
@@ -223,6 +227,7 @@ void *publish (void *donnees){
         printf(" courant ic: %i ", *ic);
         printf(" courant in: %i\n",*in);
 */
+
         SVPublisher_ASDU_increaseSmpCnt(asdu1);
         SVPublisher_publish(svPublisher);
         *n+=1; // j'incrémente la valeur de mon échantillon
@@ -243,13 +248,24 @@ void *publish (void *donnees){
 
         if (maintenant.tv_sec - debut_programme.tv_sec > taille){ // supérieur à une durée fixé dans la variable taille
             int j;
-            /*-- affichage après un certains temps des temps de cycle --*/
-            for (j=0;j<taille;j++){
+            //création d'un fichier de stockage des valeurs
+            FILE *fichier;
+            fichier = fopen("./temps_cycle.txt", "w+");
+            fprintf(fichier,"\t\t Résultat temps de cycle\n\n");
 
-              printf(" temps consommée [%i] = %ld usec \n",j,duree[j]);
-            /* Affichage des différents temps et temps consommes */
-            if (duree[j]< (time_theoric - marge) || duree[j] > (time_theoric + marge))
-                printf(" erreur : non respect de la durée limite \n");
+             if(fichier != NULL) {
+                /*-- affichage après un certains temps des temps de cycle --*/
+                for (j=0;j<taille;j++){
+                    /*affichage dans le shell*/
+                    printf(" temps consommée [%i] = %ld  us\n",j,duree[j]);
+                    /* enregistrement dans un fichier texte */
+                    fprintf(fichier,"cycle[%i] \t temps de cycle : %ld usec\n",j,duree[j]);
+                /* Affichage des différents temps et temps consommes */
+               /* if (duree[j]< (time_theoric - marge) || duree[j] > (time_theoric + marge))
+                    fprintf(fichier," erreur : non respect de la durée limite \n");
+               */
+                }
+                fclose(fichier);
             }
             break;
         }
@@ -257,6 +273,7 @@ void *publish (void *donnees){
         *n=0;
         i+=1;
     }
+
     /* Cleanup - free all resources */
     SVPublisher_destroy(svPublisher); //destruction publisher
     pthread_exit(NULL);
