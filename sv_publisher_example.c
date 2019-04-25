@@ -24,18 +24,21 @@
 #define _USE_MATH_DEFINES
 #define GNU_SOURCE
 #define gettid() syscall(__NR_gettid)
+
 #define TWO_PI_OVER_THREE  2.0943951
+
 #define SCHED_DEADLINE	6
 
  /* XXX use the proper syscall numbers */
  #ifdef __x86_64__
- #define __NR_sched_setattr		314
- #define __NR_sched_getattr	    315
+ #define __NR_sched_setattr	314
+ #define __NR_sched_getattr	315
  #endif
 
- static volatile int done;
+static volatile int done;
 
-/* Remaining fields are for SCHED_DEADLINE */
+
+/* ces champs sont utilisées pour le SCHED_DEADLINE */
  struct sched_attr {
     /* Taille de la structure */
 	uint32_t size;
@@ -57,14 +60,18 @@ SCHED_RR) */
 	uint64_t sched_deadline;
 	uint64_t sched_period;
  };
-
+/*
+ * fonction pour affecter les attributs 
+ */
  int sched_setattr(pid_t pid,
 		  const struct sched_attr *attr,
 		  unsigned int flags)
  {
 	return syscall(__NR_sched_setattr, pid, attr, flags);
  }
-
+/*
+ * fonction pour récupérer les attributs 
+ */
  int sched_getattr(pid_t pid,
 		  struct sched_attr *attr,
 		  unsigned int size,
@@ -74,18 +81,22 @@ SCHED_RR) */
  }
 
 
+/*
+ * données partagées entre threads
+*/
 typedef struct data_{
 
     char* interface;
-    float* f_nominal,* samplesPerCycle,* fech,* f,* w,* phase,* n;
-    int*   Va,* Vb,* Vc,* Vn,* ia,* ib,* ic,* in, *Vamp , *Iamp;
-   // float*   Va,* Vb,* Vc,* Vn,* ia,* ib,* ic,* in, *Vamp , *Iamp;
+    float* f_nominal,* samplesPerCycle,* fech,* f,* w,* phase,* n, * Vamp , * Iamp;
+    int*   Va,* Vb,* Vc,* Vn,* ia,* ib,* ic,* in;
     double* theta ;
     pthread_mutex_t mutex;
 
-
 }data_;
 
+/*
+    Fonction timer
+*/
 
 void time_add_ns( struct timespec *t,int ns)
 {
@@ -129,12 +140,22 @@ void *publish (void *donnees){
      interface =(*param).interface ;
 
     Quality q = QUALITY_VALIDITY_GOOD;
+    unsigned int flags =0;
+    struct sched_attr attr;
+    struct timespec t;
+    struct timeval maintenant;
+    struct timeval debut_thread;
+    struct timeval debut_programme;
+    long int duration;
+     int i=0,taille=60;
+    long int duree[taille];
 
-
+    /* Création d'un publisheur avec une interface spécifiée*/
     SVPublisher svPublisher  = SVPublisher_create(NULL,interface); // Crée un nouveau publisher de sampled values selon l'IEC61850-9-2
-    SVPublisher_ASDU asdu1 = SVPublisher_addASDU(svPublisher, "svpub1isher", NULL, 1); // création d'un bloc de donnée qui sera générer
+    /* Ajout d'un bloc de données ASDU dans le publisher*/
+    SVPublisher_ASDU asdu1 = SVPublisher_addASDU(svPublisher, "svpub1isher", NULL, 1); 
 
-    // allocation mémoire dans le bloc de données
+    /* allocation mémoire dans le bloc de données */
     int Ima = SVPublisher_ASDU_addINT32(asdu1);
     int ampaq = SVPublisher_ASDU_addQuality(asdu1);
     int Imb = SVPublisher_ASDU_addINT32(asdu1);
@@ -156,43 +177,35 @@ void *publish (void *donnees){
     SVPublisher_ASDU_setRefrTm(asdu1, 0);
 
     SVPublisher_setupComplete(svPublisher);
-
- //   float time_theoric = 999750.0; //us
-//    float marge = 250.0; //us
+    /*
+    float time_theoric = 999750.0; //us
+    float marge = 250.0; //us
+    */
         /* ====== Deadline scheduler ====== */
       /* période de la tâche publication de 1s */
-    unsigned int flags =0;
-    struct sched_attr attr;
-    // la tâche commence
-    printf("La tâche d'écriture a commencé id: [%ld]\n", gettid());
+    /* paramètres du scheduler deadline */
 
-	attr.size = sizeof(struct sched_attr);
-	attr.sched_policy = SCHED_DEADLINE;
-	attr.sched_flags = 0;
-	attr.sched_nice = -20;
-	attr.sched_priority = 0;
+    attr.size = sizeof(struct sched_attr);
     attr.sched_policy = SCHED_DEADLINE;
+    attr.sched_flags = 0;
+    attr.sched_nice = -20;
+    attr.sched_priority = 0;
+    attr.sched_policy = SCHED_DEADLINE;
+      /* nanosecondes*/
     attr.sched_runtime = 0.8e9;
-	attr.sched_deadline = 0.9;
-	attr.sched_period  = 1.0e9;
-	sched_setattr(0, &attr, flags);
-    /* period in milliseconds */
-    struct timespec t;
-    struct timeval maintenant;
-    struct timeval debut_thread;
-    struct timeval debut_programme;
-    long int duration;
+    attr.sched_deadline = 0.9e9;
+    attr.sched_period  = 1.0e9;
+
+    sched_setattr(0, &attr, flags);
+
     clock_gettime(CLOCK_MONOTONIC, &t);
     // stockage dans un tableau des temps de cycles
-    int i=0,taille=60;
-    long int duree[taille];
-
     gettimeofday(&debut_programme,NULL);
+
     while (!done) {  /* Boucle infinie */
 
         gettimeofday(&debut_thread,NULL);
-        //clock_gettime(CLOCK_MONOTONIC, &debut_thread);
-
+       
         while(*n<4000){
 
         /*verouillage du mutex*/
@@ -216,8 +229,9 @@ void *publish (void *donnees){
         SVPublisher_ASDU_setINT32(asdu1, Vmn,*Vn);
         SVPublisher_ASDU_setQuality(asdu1, Vmnq,q);
         SVPublisher_ASDU_setRefrTm(asdu1, Hal_getTimeInMs());
-/*
-        printf("\t sample :  %f ", *n );    // vérification sur le terminal des valeurs écrites
+	
+/*	vérification sur la console des valeurs écrites
+        printf("\t sample :  %f ", *n );   
         printf(" Tension Va: %i ", *Va);
         printf(" Tension Vb: %i ", *Vb);
         printf(" Tension Vc: %i ", *Vc);
@@ -229,8 +243,10 @@ void *publish (void *donnees){
 */
 
         SVPublisher_ASDU_increaseSmpCnt(asdu1);
+	/* publication des données */
         SVPublisher_publish(svPublisher);
-        *n+=1; // j'incrémente la valeur de mon échantillon
+	/* incrémentation du numéro de la donnée à publier */
+        *n+=1;
         /*déverouillage du mutex*/
         pthread_mutex_unlock(&(param->mutex));
         /*reveil de l'horloge */
@@ -241,29 +257,33 @@ void *publish (void *donnees){
         /*mesure du temps final*/
         gettimeofday(&maintenant,NULL);
          /*calcul du temps de cycle*/
-        duration = (maintenant.tv_sec - debut_thread.tv_sec);
-        duration *= 1000000;
-        duration += (maintenant.tv_usec - debut_thread.tv_usec);
+        duration  = (maintenant.tv_sec*1000000   + maintenant.tv_usec);
+        duration -= (debut_thread.tv_sec*1000000 + debut_thread.tv_usec);
+        
+
+        /* remplissage dans un tableau des temps d'éxecution de la tâche de publication*/
         duree [i] =  duration;
 
         if (maintenant.tv_sec - debut_programme.tv_sec > taille){ // supérieur à une durée fixé dans la variable taille
             int j;
-            //création d'un fichier de stockage des valeurs
+            /*création d'un fichier de stockage des valeurs */
             FILE *fichier;
-            fichier = fopen("./temps_cycle.txt", "w+");
-            fprintf(fichier,"\t\t Résultat temps de cycle\n\n");
+            fichier = fopen("./temps_cycle.csv", "w+");
+            /*chemin du fichier dans le docker*/
+           //fichier = fopen("/log/temps_cycle.csv", "w+");
 
              if(fichier != NULL) {
                 /*-- affichage après un certains temps des temps de cycle --*/
                 for (j=0;j<taille;j++){
                     /*affichage dans le shell*/
                     printf(" temps consommée [%i] = %ld  us\n",j,duree[j]);
-                    /* enregistrement dans un fichier texte */
-                    fprintf(fichier,"cycle[%i] \t temps de cycle : %ld usec\n",j,duree[j]);
+                     /* enregistrement en format tableur csv*/
+                    fprintf(fichier,"%i",j);
+                    fprintf(fichier,"\t%ld\n",duree[j]);
                 /* Affichage des différents temps et temps consommes */
-               /* if (duree[j]< (time_theoric - marge) || duree[j] > (time_theoric + marge))
+                /*if (duree[j]< (time_theoric - marge) || duree[j] > (time_theoric + marge))
                     fprintf(fichier," erreur : non respect de la durée limite \n");
-               */
+                */
                 }
                 fclose(fichier);
             }
@@ -273,14 +293,15 @@ void *publish (void *donnees){
         *n=0;
         i+=1;
     }
-
-    /* Cleanup - free all resources */
-    SVPublisher_destroy(svPublisher); //destruction publisher
+    /* Nettoyage - libéaration des ressources */
+    SVPublisher_destroy(svPublisher);
+    /* fin du thread */
     pthread_exit(NULL);
 }
 
 void *create_signal(void *donnees)
 {
+    /* allocation mémoire */
     data_* param = malloc(sizeof(data_));
     param  = donnees;
     float* w = malloc(sizeof(float));
@@ -293,9 +314,9 @@ void *create_signal(void *donnees)
     n     = (*param).n;
     double* theta = malloc(sizeof(double));
     theta = (*param).theta;
-    int* Vamp = malloc(sizeof(int));
+    float* Vamp = malloc(sizeof(float));
     Vamp  = (*param).Vamp;
-    int* Iamp = malloc(sizeof(int));
+    float* Iamp = malloc(sizeof(float));
     Iamp  = (*param).Iamp;
 
     int* Va = malloc(sizeof(int));
@@ -318,7 +339,7 @@ void *create_signal(void *donnees)
     while(1){ /* Boucle infinie */
 
        /*verrouillage du mutex*/
-       pthread_mutex_lock(&(*param).mutex);
+        pthread_mutex_lock(&(*param).mutex);
 
         *theta = *w *(double)(*n * 1/(*fech));
         *Va =  *Vamp * sin(*theta)*100;
@@ -332,6 +353,7 @@ void *create_signal(void *donnees)
         /* Deverouillage du mutex */
         pthread_mutex_unlock(&(*param).mutex);
     }
+	/* fin du thread */
         pthread_exit(NULL);
 }
 
@@ -339,8 +361,10 @@ int
 main(int argc, char** argv)
 {
     char* Interface;
-    float n=0,fech=4000;
-    int Va,Vb,Vc,Vn,ia,ib,ic,in,Vamp = (int) (11000.0*sqrt(2)),Iamp = (int) (20.0*sqrt(2));
+    float n=0.0,fech=4000.0;
+    int Va,Vb,Vc,Vn,ia,ib,ic,in;
+    float Vamp =  11000.f*sqrt(2);
+    float Iamp =  20.f*sqrt(2);
     double theta = 0.0;
     float f_nominal =50.0,samplesPerCycle=80.0,f=50.0,w= 2*M_PI*f,phase=M_PI/6;
 
@@ -350,12 +374,12 @@ main(int argc, char** argv)
         Interface = "eth0";
     printf("Using Interface : %s \n",Interface);
 
-    // création d'un bloc de données de thread de types data_
+    /* création d'un bloc de données de thread de types data_ */
     data_ thread_data;
 
-    // affectation de l'adresse ou doivent pointer les variables de la structure
+    /* affectation de l'adresse ou doivent pointer les variables de la structure */
     thread_data.fech = &fech;
-    thread_data.n = &n;
+    thread_data.n  = &n;
     thread_data.Va = &Va;
     thread_data.Vb = &Vb;
     thread_data.Vc = &Vc;
@@ -376,23 +400,22 @@ main(int argc, char** argv)
     thread_data.theta = &theta;
     thread_data.interface = Interface;
 
-    //intalisation du mutex
+    /* Initialisation du mutex */
     pthread_mutex_init(&thread_data.mutex,NULL);
-
-    // décalaration des threads
+    
+    /* décalaration des threads */
     pthread_t thread_publish;
     pthread_t thread_create_signal;
 
-    // création des threads de publication et création de signaux;
+    /* création des threads de publication et création de signaux */
     pthread_create(&thread_publish,NULL,publish,&thread_data);
     pthread_create(&thread_create_signal,NULL,create_signal,&thread_data);
 
-    // le programme principal attend la fin des deux tâches
+    /* le programme principal attend la fin des deux tâches */
     pthread_join(thread_publish,NULL);
     pthread_join(thread_create_signal,NULL);
 
-
-    return 0;
+    return EXIT_SUCCESS;
 } /* main() */
 
 
