@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <math.h>
-#include <signal.h>
 #include <time.h>
 #include <errno.h>
 #include <sys/syscall.h>
@@ -22,9 +21,10 @@
 #include <sched.h>
 #include <semaphore.h>
 #define _USE_MATH_DEFINES
+
 #define gettid() syscall(__NR_gettid)
 
-#define TWO_PI_OVER_THREE  2.0943951
+#define TWO_PI_OVER_THREE  2*M_PI/3
 
 #define SCHED_DEADLINE	6
 
@@ -55,7 +55,6 @@
 
 static volatile int done;
 sem_t semaphore;
-
 /* ces champs sont utilisées pour le SCHED_DEADLINE */
  struct sched_attr {
     /* Taille de la structure */
@@ -98,25 +97,45 @@ SCHED_RR) */
 	return syscall(__NR_sched_getattr, pid, attr, size, flags);
  }
 
-
 /*
  * données partagées entre threads
 */
 typedef struct data_{
 
     char* interface;
-    float* f_nominal,* samplesPerCycle,* fech,* f,* w,* phase,* n, * Vamp, *Zmag;
-    float* Iamp;
+    float* f_nominal,* samplesPerCycle,* fech,* f,* w,* phase,* n, *Zmag;
+    float* Iamp_init,* Vamp_init;
+    float* Iamp, *Vamp;
     int*   Va,* Vb,* Vc,* Vn,* ia,* ib,* ic,* in;
     double* theta ;
  //   pthread_mutex_t mutex;
 
 }data_;
 
+
+void min_max (long int* duree,int *min,int *max)
+{
+	int val_min,val_max,i;
+	val_min = duree[0];
+	val_max = duree[0];
+	int nb = sizeof (duree);
+	for (i=0; i<nb; i++)
+	{
+		if (duree[i] < val_min)
+		{
+			val_min = duree[i];
+		}
+		else if (duree[i] > val_max)
+		{
+			val_max = duree[i];
+		}
+	}
+	*min=val_min;
+	*max=val_max;
+}
 /*
     Fonction ajout délai
 */
-
 void time_add_ns( struct timespec *t,int ns)
 {
 
@@ -131,12 +150,11 @@ void time_add_ns( struct timespec *t,int ns)
     }
 
 }
-
 void *publish (void *donnees){
 
 
   const pthread_t pid = pthread_self();
-  const int core_id = 4;  // CPU5
+  const int core_id = 5;  // CPU6
 
   // cpu_set_t: This data set is a bitset where each bit represents a CPU.
   cpu_set_t cpuset;
@@ -170,13 +188,12 @@ void *publish (void *donnees){
     buffer = malloc(needed);
     snprintf(buffer, needed, FAILURE_MSG, pid, core_id);
   }
-     unsigned int flags =0;
-    struct sched_attr attr;
 
 /*============= Deadline scheduler =============== */
 /* période de la tâche publication de 1s */
  /* paramètres du scheduler deadline */
-
+    unsigned int flags =0;
+    struct sched_attr attr;
     attr.size = sizeof(struct sched_attr);
     attr.sched_policy = SCHED_DEADLINE;
     attr.sched_flags = 0;
@@ -212,22 +229,32 @@ void *publish (void *donnees){
      in = (*param).in;
     float* n = malloc(sizeof(float));
      n = (*param).n;
-  /*  float* Vamp = malloc(sizeof(float));
+
+    float* Vamp = malloc(sizeof(float));
     Vamp  = (*param).Vamp;
     float* Iamp = malloc(sizeof(float));
     Iamp  = (*param).Iamp;
-  */// float* Zmag = malloc(sizeof(float));
-  // Zmag  = (*param).Zmag;
+
+    float* Vamp_init = malloc(sizeof(float));
+    Vamp_init  = (*param).Vamp_init;
+    float* Iamp_init = malloc(sizeof(float));
+    Iamp_init  = (*param).Iamp_init;
+
+    float* phase = malloc(sizeof(float));
+    phase = (*param).phase;
     char* interface = malloc(sizeof(char));
      interface =(*param).interface ;
 
     Quality q = QUALITY_VALIDITY_GOOD;
+
     struct timeval maintenant;
     struct timeval debut_thread;
     struct timeval debut_programme;
-    long int duration;
-     int i=0,taille=40;
+    long int duration = 0;
+    int i=0,taille=40;
     long int duree[taille];
+     int min,max;
+
     /* Paramètres communication*/
     CommParameters SVCommParameters;
 
@@ -240,6 +267,7 @@ void *publish (void *donnees){
     SVCommParameters.dstAddress[5] = 0x01;
     SVCommParameters.vlanId = 0;
     SVCommParameters.vlanPriority = 4;
+
 
     /* Création d'un publisheur avec une interface spécifiée*/
     SVPublisher svPublisher  = SVPublisher_create(&SVCommParameters,interface); // Crée un nouveau publisher de sampled values selon l'IEC61850-9-2
@@ -255,7 +283,6 @@ void *publish (void *donnees){
     int ampcq = SVPublisher_ASDU_addQuality(asdu1);
     int Imn = SVPublisher_ASDU_addINT32(asdu1);
     int ampnq = SVPublisher_ASDU_addQuality(asdu1);
-
     int Vma = SVPublisher_ASDU_addINT32(asdu1);
     int Vmaq = SVPublisher_ASDU_addQuality(asdu1);
     int Vmb = SVPublisher_ASDU_addINT32(asdu1);
@@ -270,26 +297,23 @@ void *publish (void *donnees){
     SVPublisher_ASDU_setRefrTm(asdu1, 0);
 
     SVPublisher_setupComplete(svPublisher);
-
-
     /* Le délai tempo n'est pas en temps absolu. Pour
      * former un temps absolu, il faut obtenir l'heure actuelle avec clock_gettime()
      * puis ajouter notre intervalle de sommeil tempo (250 µs) ** plus bas **
      */
     struct timespec tempo;
     clock_gettime(CLOCK_MONOTONIC, &tempo);
-
     gettimeofday(&debut_programme,NULL);
 
     while (!done) {  /* Boucle infinie */
 
         gettimeofday(&debut_thread,NULL);
-
         while(*n<4000){
 
 	    /*verouillage du mutex*/
 	    //pthread_mutex_lock(&(param->mutex));
 	    sem_wait(&semaphore);
+
 	    SVPublisher_ASDU_setSmpSynch(asdu1,2);
 	    SVPublisher_ASDU_setINT32(asdu1, Ima,*ia);  //écriture dans le bloc de donnée asud1 de la variable courant phase 1
 	    SVPublisher_ASDU_setQuality(asdu1, ampaq,q);
@@ -299,7 +323,6 @@ void *publish (void *donnees){
 	    SVPublisher_ASDU_setQuality(asdu1, ampcq,q);
 	    SVPublisher_ASDU_setINT32(asdu1, Imn,*in);
 	    SVPublisher_ASDU_setQuality(asdu1, ampnq,q);
-
 	    SVPublisher_ASDU_setINT32(asdu1, Vma,*Va);  //écriture dans le bloc de donnée asud1 de la variable courant phase 1
 	    SVPublisher_ASDU_setQuality(asdu1, Vmaq,q);
 	    SVPublisher_ASDU_setINT32(asdu1, Vmb,*Vb);
@@ -308,21 +331,9 @@ void *publish (void *donnees){
 	    SVPublisher_ASDU_setQuality(asdu1, Vmcq,q);
 	    SVPublisher_ASDU_setINT32(asdu1, Vmn,*Vn);
 	    SVPublisher_ASDU_setQuality(asdu1, Vmnq,q);
-
 	    SVPublisher_ASDU_setRefrTm(asdu1, Hal_getTimeInMs());
-/*
-	    //vérification sur la console des valeurs écrites
-	    printf("\t sample :  %f ", *n );
-	    printf(" Tension Va: %i ", *Va);
-	    printf(" Tension Vb: %i ", *Vb);
-	    printf(" Tension Vc: %i ", *Vc);
-	    printf(" Tension Vn: %i ", *Vn);
-	    printf(" courant ia: %i ", *ia);
-	    printf(" courant ib: %i ", *ib);
-	    printf(" courant ic: %i ", *ic);
-	    printf(" courant in: %i\n",*in);
-*/
 	    SVPublisher_ASDU_increaseSmpCnt(asdu1);
+
 	    /* publication des données */
 	    SVPublisher_publish(svPublisher);
 	    /* incrémentation du numéro de la donnée à publier */
@@ -342,9 +353,40 @@ void *publish (void *donnees){
 	duration  = (maintenant.tv_sec*1000000   + maintenant.tv_usec);
 	duration -= (debut_thread.tv_sec*1000000 + debut_thread.tv_usec);
 
+	/************** Test de plusieurs types de dfauts ***********/
+	 int j;
+	 switch(maintenant.tv_sec - debut_programme.tv_sec){
+
+		case 1 :   //défaut monophasé phase A en amont de la protection
+			Iamp[0] = Iamp [0]*5;
+			Vamp[0] = Vamp [0]/2;
+			*phase = 75*M_PI/180; // 75deg en retard
+		 	break;
+		case 2 :   //défaut monophasé phase A en aval de la protection
+			*phase =  (-1)*75*M_PI/180; // 75deg en retard
+		 	break;
+                case 3 :   //defaut triphasé en amont de la protection max I
+			/*restitution des valeurs de départ pour tester un nouveau type de défaut*/
+			Iamp[0] = *Iamp_init;
+			Vamp[0]=  *Vamp_init;
+		    /*remplissage*/
+			for(j=0;j<3;j++){
+			Iamp[j] = Iamp[j]*5;
+			Vamp[j]= Vamp[j]/2;
+			}
+			/* 75° en retard */
+			*phase = 75*M_PI/80;
+		 	break;
+		case 4:   //defaut triphasé en aval de la protection max I
+			*phase = (-1)*75*M_PI/180; // 75deg en retard
+		 	break;
+		}
+
+		/************** Test de plusieurs types de dfauts ***********/
+
+
 	/* remplissage dans un tableau des temps d'éxecution de la tâche de publication*/
 	duree [i] =  duration;
-
 
 	if (maintenant.tv_sec - debut_programme.tv_sec > taille){ // supérieur à une durée fixé dans la variable taille
 	    int j;
@@ -358,8 +400,8 @@ void *publish (void *donnees){
 		/*-- affichage après un certains temps des temps de cycle --*/
 		for (j=0;j<taille;j++){
 		    /*affichage dans le shell*/
-		    printf(" temps consommée [%i] = %ld  us\n",j,duree[j]);
-		  //    printf ("\t%ld\n",duree[j]);
+		    printf(" temps consommée [%i] = %ld  µs\n",j,duree[j]);
+		  //printf ("\t%ld\n",duree[j]);
 		    /* enregistrement en format tableur csv*/
 		    fprintf(fichier,"%i",j);
 		    fprintf(fichier,"\t%ld\n",duree[j]);
@@ -372,6 +414,9 @@ void *publish (void *donnees){
     *n=0;
     i+=1;
     }
+    min_max(duree,&min,&max);
+    printf(" \n min : %i\t  max : %i\t",min,max);
+    printf("jitter max : %i\n µs",max-1000000);
     /* Nettoyage - libéaration des ressources */
     SVPublisher_destroy(svPublisher);
     /* fin du thread */
@@ -383,7 +428,7 @@ void *create_signal(void *donnees)
 
 
   const pthread_t pid = pthread_self();
-  const int core_id = 5;  // CPU8
+  const int core_id = 5;  // CPU6
 
   // cpu_set_t: This data set is a bitset where each bit represents a CPU.
   cpu_set_t cpuset;
@@ -466,27 +511,28 @@ void *create_signal(void *donnees)
     int* in = malloc(sizeof(int));
     in = (*param).in;
 
+  //  struct timeval debut_programme;
+  //  struct timeval maintenant;
+  //  gettimeofday(&debut_programme,NULL);
+
     while(!done){ /* Boucle infinie */
 
-	/*verrouillage du mutex*/
-	  //pthread_mutex_lock(&(*param).mutex);
-	  sem_wait(&semaphore);
-	  *theta = *w *(double)(*n * 1/(*fech));
-	  *Va =  *Vamp * sin(*theta)*100;
-	  *Vb =  *Vamp * sin(*theta - TWO_PI_OVER_THREE)*100;
-	  *Vc =  *Vamp * sin(*theta + TWO_PI_OVER_THREE)*100;
-	  *Vn =  *Va + *Vb + *Vc;
-	  *ia =  *Iamp * sin(*theta - *phase)*1000;
-	  *ib =  *Iamp * sin(*theta - TWO_PI_OVER_THREE -  *phase)*1000;
-	  *ic =  *Iamp * sin(*theta + TWO_PI_OVER_THREE -  *phase)*1000;
-	  *in =  *ia + *ib + *ic;
-	  /* Deverouillage du mutex */
-	 // pthread_mutex_unlock(&(*param).mutex);
-	  sem_post(&semaphore);
+	   sem_wait(&semaphore);
+	   *theta = *w *(double)(*n * 1/(*fech));
+	   *Va =  Vamp[0] * sin(*theta)*100;
+	   *Vb =  Vamp[1] * sin(*theta - TWO_PI_OVER_THREE)*100;
+	   *Vc =  Vamp[2] * sin(*theta + TWO_PI_OVER_THREE)*100;
+	   *Vn =  *Va + *Vb + *Vc;
+	   *ia =  Iamp[0] * sin(*theta - *phase)*1000;
+	   *ib =  Iamp[1] * sin(*theta - TWO_PI_OVER_THREE -  *phase)*1000;
+	   *ic =  Iamp[2] * sin(*theta + TWO_PI_OVER_THREE -  *phase)*1000;
+	   *in =  *ia + *ib + *ic;
+  	   sem_post(&semaphore);
     }
 	/* fin du thread */
         pthread_exit(NULL);
 }
+
 
 int
 main(int argc, char** argv)
@@ -494,9 +540,12 @@ main(int argc, char** argv)
     char* Interface;
     float n=0.0,fech=4000.0;
     int Va,Vb,Vc,Vn,ia,ib,ic,in;
-    float Vamp =  11000.0*sqrt(2);
-    float Zmag = 10.0;
-    float Iamp = (Vamp/Zmag);
+    float Vamp_init =  11000.0*sqrt(2);
+    float Iamp_init =  10*sqrt(2);
+    float Vamp [3] = {Vamp_init,Vamp_init,Vamp_init};
+    float Iamp [3] = {Iamp_init,Iamp_init,Iamp_init};
+    float *Vamp_p = Vamp;
+    float *Iamp_p = Iamp;
     double theta = 0.0;
     float phase = M_PI/6;
     float f_nominal =50.0,samplesPerCycle=80.0,f=50.0,w= 2*M_PI*f;
@@ -521,11 +570,14 @@ main(int argc, char** argv)
     thread_data.ib = &ib;
     thread_data.ic = &ic;
     thread_data.in = &in;
-    thread_data.Vamp = &Vamp;
-    thread_data.Zmag = &Zmag;
-    thread_data.Iamp = &Iamp;
+    thread_data.Vamp = Vamp_p;
+    thread_data.Iamp = Iamp_p;
+
+    thread_data.Vamp_init = &Vamp_init;
+    thread_data.Iamp_init = &Iamp_init;
+
     thread_data.f_nominal = &f_nominal;
-    thread_data.f = &f;
+        thread_data.f = &f;
     thread_data.w =&w;
     thread_data.n =&n;
     thread_data.phase=&phase;
