@@ -1,4 +1,8 @@
+<<<<<<< HEAD
  Résultat temps de cycle
+=======
+		 Résultat temps de cycle
+>>>>>>> 489843953ad2e1fd837bdcadca76c415410d7e05
 
 cycle[0] 	 temps de cycle : 999824 usec
 cycle[1] 	 temps de cycle : 1000009 usec
