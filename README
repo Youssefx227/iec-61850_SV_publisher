@@ -1,4 +1,4 @@
 Ceci est le programme pour générer des Sampled values sous IEC 61850 
 La publication des valeurs échantillonnées est faite par une tâche thread_publish avec CPUaffinity & sched_deadline
 il y a besoin de recompiler la librairie lib61850 pour exécuter ce code sur une autre machine
-
+Vous trouverez la lbrairie 61850 sur https://github.com/mz-automation/libiec61850.git
